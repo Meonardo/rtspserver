@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.6)
+cmake_minimum_required(VERSION 3.21)
 
 project(rtspserver VERSION 0.0.1)
 
@@ -34,6 +34,7 @@ target_sources(
 
 # find GStreamer dependencies
 set(ENV{PKG_CONFIG_PATH} "D:/gstreamer/1.0/msvc_x86_64/lib/pkgconfig")
+set(GST_BIN_PATH "D:/gstreamer/1.0/msvc_x86_64/bin")
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(

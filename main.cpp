@@ -1,11 +1,18 @@
 #include <gst/gst.h>
 #include <gst/rtsp-server/rtsp-server.h>
 
+#include <WS2tcpip.h>
 #include <Windows.h>
+#include <iphlpapi.h>
+#include <winsock2.h>
 
 #include <iostream>
 #include <string>
 #include <thread>
+#include <vector>
+
+#pragma comment(lib, "IPHLPAPI.lib")
+#pragma comment(lib, "Ws2_32.lib")
 
 static GMainContext* context_ = nullptr;
 static GstElement* pipeline_ = nullptr;
@@ -19,6 +26,7 @@ constexpr const gchar* RTSP_PATH = "/1";
 constexpr const gchar* RTSP_ADDR = "0.0.0.0";
 
 static std::unique_ptr<std::thread> gst_thread_;
+static std::vector<std::string> ip_addr_list_;
 
 static int screen_index_ = 0;
 static bool use_hardware_encoder_ = true;
@@ -49,13 +57,23 @@ static bool UpdatePipelineState(GstState new_state) {
   return true;
 }
 
+static void client_disconnect_callback(GstRTSPClient* self,
+                                       GstRTSPContext* ctx,
+                                       gpointer user_data) {
+  auto conn = gst_rtsp_client_get_connection(self);
+  auto url = gst_rtsp_connection_get_url(conn);
+  g_print(" [-]client disconnected, host:%s, port=%u\n", url->host, url->port);
+}
+
 static void client_connected_callback(GstRTSPServer* server,
                                       GstRTSPClient* object,
                                       gpointer user_data) {
   auto conn = gst_rtsp_client_get_connection(object);
-  auto ip = gst_rtsp_connection_get_ip(conn);
   auto url = gst_rtsp_connection_get_url(conn);
-  g_print("client: %s connected, host:%s, port=%u\n", ip, url->host, url->port);
+  g_print(" [+]client connected, host:%s, port=%u\n", url->host, url->port);
+
+  g_signal_connect(object, "teardown-request",
+                   G_CALLBACK(client_disconnect_callback), nullptr);
 }
 
 static void media_constructed_callback(GstRTSPMediaFactory* factory,
@@ -77,7 +95,7 @@ BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor,
   int* count = (int*)dwData;
   int width = abs(lprcMonitor->right - lprcMonitor->left);
   int height = abs(lprcMonitor->bottom - lprcMonitor->top);
-  g_print("Monitor: %d (%d,%d,%d,%d) [width=%d height=%d]\n", *count,
+  g_print("Monitor: %d (%d,%d,%d,%d) [width=%d,height=%d]\n", *count,
           lprcMonitor->left, lprcMonitor->top, lprcMonitor->right,
           lprcMonitor->bottom, width, height);
 
@@ -127,8 +145,16 @@ static void InitGstPipeline() {
 
   server_id_ = gst_rtsp_server_attach(server_, context_);
   if (server_id_ > 0) {
-    g_print("Stream ready at rtsp://%s:%s%s\n", RTSP_ADDR, RTSP_PORT,
-            RTSP_PATH);
+    g_print("");
+    g_print(
+        "\n======================= Play RTSP stream ready at: "
+        "======================= \n",
+        RTSP_ADDR, RTSP_PORT, RTSP_PATH);
+    for (const auto& addr : ip_addr_list_) {
+      g_print("rtsp://%s:%s%s\n", addr.c_str(), RTSP_PORT, RTSP_PATH);
+    }
+    g_print("=====================================================================");
+    g_print("\n\n\n");
 
     g_signal_connect(server_, "client-connected",
                      G_CALLBACK(client_connected_callback), nullptr);
@@ -161,8 +187,76 @@ static void DeInitGstPipeline() {
   }
 }
 
-// test the server by using:
-// gst-launch-1.0.exe playbin3 uri=rtsp://localhost:8554/test
+void GetCurrentIP() {
+  WSADATA wsaData;
+  if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+    std::cerr << "WSAStartup failed: " << WSAGetLastError() << std::endl;
+    return;
+  }
+
+  PIP_ADAPTER_ADDRESSES pAddresses = NULL;
+  ULONG outBufLen = 0;
+  ULONG Iterations = 0;
+  DWORD dwRetVal = 0;
+
+  // Allocate a 15 KB buffer to start with.
+  outBufLen = 15000;
+
+  do {
+    pAddresses = (IP_ADAPTER_ADDRESSES*)malloc(outBufLen);
+    if (pAddresses == NULL) {
+      g_printerr("Memory allocation failed for IP_ADAPTER_ADDRESSES struct");
+      WSACleanup();
+      return;
+    }
+
+    dwRetVal = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, NULL,
+                                    pAddresses, &outBufLen);
+
+    if (dwRetVal == ERROR_BUFFER_OVERFLOW) {
+      free(pAddresses);
+      pAddresses = NULL;
+    } else {
+      break;
+    }
+
+    Iterations++;
+  } while ((dwRetVal == ERROR_BUFFER_OVERFLOW) && (Iterations < 3));
+
+  if (dwRetVal == NO_ERROR) {
+    // If successful, output some information from the data we received
+    PIP_ADAPTER_ADDRESSES pCurrAddresses = pAddresses;
+    while (pCurrAddresses) {
+      bool type_filter = (pCurrAddresses->IfType == IF_TYPE_ETHERNET_CSMACD ||
+                          pCurrAddresses->IfType == IF_TYPE_IEEE80211);
+      if (type_filter && pCurrAddresses->OperStatus == IfOperStatusUp) {
+        PIP_ADAPTER_UNICAST_ADDRESS pUnicast =
+            pCurrAddresses->FirstUnicastAddress;
+        while (pUnicast != NULL) {
+          if (pUnicast->Address.lpSockaddr->sa_family ==
+              AF_INET) {  // Check for IPv4
+            char buffer[INET_ADDRSTRLEN] = {0};
+            getnameinfo(pUnicast->Address.lpSockaddr,
+                        pUnicast->Address.iSockaddrLength, buffer,
+                        sizeof(buffer), NULL, 0, NI_NUMERICHOST);
+            // g_print("Possible IP Address: %s\n", buffer);
+            ip_addr_list_.push_back(buffer);
+          }
+          pUnicast = pUnicast->Next;
+        }
+      }
+      pCurrAddresses = pCurrAddresses->Next;
+    }
+  } else {
+    g_printerr("GetAdaptersAddresses failed with error: %u", dwRetVal);
+  }
+
+  if (pAddresses) {
+    free(pAddresses);
+  }
+
+  WSACleanup();
+}
 
 int HandleOptions(int argc, char** argv) {
   if (argc < 2) {
@@ -192,6 +286,7 @@ int HandleOptions(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+  GetCurrentIP();
   HandleOptions(argc, argv);
 
   gst_init(&argc, &argv);
@@ -217,7 +312,7 @@ int main(int argc, char** argv) {
 
   g_print(
       "\nCapture screen %d\nEncoder settings: bitrate=%d, fps=%d, use hardware "
-      "encoder=%d\n\n\n",
+      "encoder=%d\n",
       screen_index_, target_bitrate_, target_fps_, use_hardware_encoder_);
 
   std::cin.get();
