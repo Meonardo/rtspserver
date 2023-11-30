@@ -35,7 +35,11 @@ static bool use_hardware_encoder_ = true;
 static int target_bitrate_ = 4000;
 static int target_fps_ = 30;
 
+#if _DEBUG
+static GstDebugLevel loglevel_ = GST_LEVEL_FIXME;
+#else
 static GstDebugLevel loglevel_ = GST_LEVEL_NONE;
+#endif
 
 static bool UpdatePipelineState(GstState new_state) {
   if (pipeline_state_ == new_state) {
@@ -117,7 +121,8 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
   gchar* audio_pipeline = "";
   if (audio) {
     audio_pipeline = g_strdup_printf(
-        "wasapi2src device=%s loopback=true ! audioconvert ! audioresample ! opusenc ! "
+        "wasapi2src device=%s loopback=true ! queue ! audioconvert ! opusenc "
+        "bitrate=192000 ! queue ! "
         "rtpopuspay name=pay1 pt=97",
         default_speaker_id_.c_str());
   }
@@ -136,6 +141,7 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
         "bitrate=%d rate-control=cqp target-usage=7 ! rtph264pay "
         "name=pay0 pt=96 %s )",
         monitor_index, width, height, bitrate, audio_pipeline);
+
   } else {
     pipeline = g_strdup_printf(
         "( d3d11screencapturesrc show-cursor=true %s ! "
