@@ -28,6 +28,7 @@ constexpr const gchar* RTSP_ADDR = "0.0.0.0";
 
 static std::unique_ptr<std::thread> gst_thread_;
 static std::vector<std::string> ip_addr_list_;
+static std::string default_speaker_id_;
 
 static int screen_index_ = -1;
 static bool use_hardware_encoder_ = true;
@@ -108,10 +109,18 @@ BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor,
 
 static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
                                                    int height,
-                                                   int bitrate) {
+                                                   int bitrate,
+                                                   bool audio) {
   GstRTSPMediaFactory* factory = gst_rtsp_media_factory_new();
   gchar* pipeline = nullptr;
   gchar* monitor_index = nullptr;
+  gchar* audio_pipeline = "";
+  if (audio) {
+    audio_pipeline = g_strdup_printf(
+        "wasapi2src device=%s loopback=true ! audioconvert ! audioresample ! opusenc ! "
+        "rtpopuspay name=pay1 pt=97",
+        default_speaker_id_.c_str());
+  }
 
   if (screen_index_ < 0) {
     monitor_index = g_strdup_printf("");
@@ -125,9 +134,8 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
         "d3d11convert ! video/x-raw(memory:D3D11Memory),width=%d,height=%d ! "
         "qsvh264enc "
         "bitrate=%d rate-control=cqp target-usage=7 ! rtph264pay "
-        "name=pay0 "
-        "pt=96 )",
-        monitor_index, width, height, bitrate, target_fps_);
+        "name=pay0 pt=96 %s )",
+        monitor_index, width, height, bitrate, audio_pipeline);
   } else {
     pipeline = g_strdup_printf(
         "( d3d11screencapturesrc show-cursor=true %s ! "
@@ -142,6 +150,9 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
 
   g_free(monitor_index);
   g_free(pipeline);
+  if (strlen(audio_pipeline) > 0) {
+    g_free(audio_pipeline);
+  }
 
   // set the protocol to use TCP
   gst_rtsp_media_factory_set_protocols(factory, GST_RTSP_LOWER_TRANS_TCP);
@@ -159,17 +170,20 @@ static void InitGstPipeline() {
   context_ = g_main_context_new();
   g_main_context_push_thread_default(context_);
 
+  auto session = gst_rtsp_session_pool_new();
+  gst_rtsp_session_pool_set_max_sessions(session, 255);
+
   server_ = gst_rtsp_server_new();
   gst_rtsp_server_set_service(server_, RTSP_PORT);
 
   GstRTSPMountPoints* mounts = gst_rtsp_server_get_mount_points(server_);
 
   // add 1080p stream
-  auto factory = CreateRTSPMediaFactory(1920, 1080, target_bitrate_);
+  auto factory = CreateRTSPMediaFactory(1920, 1080, target_bitrate_, true);
   gst_rtsp_mount_points_add_factory(mounts, RTSP_1080_PATH, factory);
 
   // add 720p stream
-  auto factory1 = CreateRTSPMediaFactory(1280, 720, target_bitrate_ / 2);
+  auto factory1 = CreateRTSPMediaFactory(1280, 720, target_bitrate_ / 2, true);
   gst_rtsp_mount_points_add_factory(mounts, RTSP_720_PATH, factory1);
 
   // bind the server to all network interfaces
@@ -291,6 +305,49 @@ void GetCurrentIP() {
   WSACleanup();
 }
 
+static std::string GetDefaultSpeakers() {
+  GstDeviceMonitor* monitor;
+  GstCaps* caps;
+
+  monitor = gst_device_monitor_new();
+
+  caps = gst_caps_new_empty_simple("audio/x-raw");
+  gst_device_monitor_add_filter(monitor, "Audio/Source", caps);
+  gst_caps_unref(caps);
+
+  GList *devices, *device_l;
+  devices = gst_device_monitor_get_devices(monitor);
+
+  std::string result;
+
+  for (device_l = devices; device_l != NULL; device_l = device_l->next) {
+    GstDevice* device = GST_DEVICE(device_l->data);
+    GstStructure* props = gst_device_get_properties(device);
+    gboolean is_default = false;
+    auto success =
+        gst_structure_get_boolean(props, "device.default", &is_default);
+    if (success) {
+      gboolean is_loopback = false;
+      gst_structure_get_boolean(props, "wasapi2.device.loopback", &is_loopback);
+      if (is_default && is_loopback) {
+        auto id = gst_structure_get_string(props, "device.id");
+        g_print("Default speaker device: %s, id: %s\n",
+                gst_device_get_display_name(device), id);
+
+        result = id;
+        break;
+      }
+    }
+
+    gst_structure_free(props);
+  }
+
+  g_list_free_full(devices, g_object_unref);
+  g_object_unref(monitor);
+
+  return result;
+}
+
 int HandleOptions(int argc, char** argv) {
   if (argc < 2) {
     g_print("Use default encoder settings!\n");
@@ -335,6 +392,9 @@ int main(int argc, char** argv) {
   gst_debug_set_default_threshold(loglevel_);
   // init gstreamer
   gst_init(&argc, &argv);
+
+  // get default speaker device name
+  default_speaker_id_ = GetDefaultSpeakers();
 
   // get gstreamer version
   const gchar* version = gst_version_string();
