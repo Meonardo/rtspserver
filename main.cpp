@@ -155,7 +155,7 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
   }
 
   // set the protocol to use TCP
-  gst_rtsp_media_factory_set_protocols(factory, GST_RTSP_LOWER_TRANS_TCP);
+  gst_rtsp_media_factory_set_protocols(factory, GST_RTSP_LOWER_TRANS_UDP);
   gst_rtsp_media_factory_set_shared(factory, TRUE);
 
   g_signal_connect(factory, "media-constructed",
