@@ -79,13 +79,13 @@ static void client_connected_callback(GstRTSPServer* server,
 static void media_constructed_callback(GstRTSPMediaFactory* factory,
                                        GstRTSPMedia* media,
                                        gpointer user_data) {
-  g_print("media constructed\n");
+  // g_print("media constructed\n");
 }
 
 static void media_configure_callback(GstRTSPMediaFactory* factory,
                                      GstRTSPMedia* media,
                                      gpointer user_data) {
-  g_print("media configured\n");
+  // g_print("media configured\n");
 }
 
 BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor,
@@ -153,7 +153,9 @@ static void InitGstPipeline() {
     for (const auto& addr : ip_addr_list_) {
       g_print("rtsp://%s:%s%s\n", addr.c_str(), RTSP_PORT, RTSP_PATH);
     }
-    g_print("=====================================================================");
+    g_print(
+        "===================================================================="
+        "=");
     g_print("\n\n\n");
 
     g_signal_connect(server_, "client-connected",
@@ -176,7 +178,6 @@ static void InitGstPipeline() {
   g_object_unref(server_);
 
   g_main_context_pop_thread_default(context_);
-  g_main_context_unref(context_);
 }
 
 static void DeInitGstPipeline() {
@@ -260,7 +261,7 @@ void GetCurrentIP() {
 
 int HandleOptions(int argc, char** argv) {
   if (argc < 2) {
-    g_print("Use default settings!\n");
+    g_print("Use default encoder settings!\n");
     return 0;
   }
 
@@ -286,14 +287,17 @@ int HandleOptions(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+  // get local ip address
   GetCurrentIP();
+  // parse command line options
   HandleOptions(argc, argv);
-
+  // init gstreamer
   gst_init(&argc, &argv);
-
+  // get gstreamer version
   const gchar* version = gst_version_string();
   g_print("GStreamer version: %s\n\n\n", version);
 
+  // get screen count
   int monitor_count = 0;
   if (!EnumDisplayMonitors(NULL, NULL, MonitorEnumProc,
                            (LPARAM)&monitor_count)) {
@@ -302,20 +306,22 @@ int main(int argc, char** argv) {
   }
   g_print("Total of %d screens detected.\n", monitor_count);
 
-  // select screen to capture
-  g_print("Please select the screen to capture: ");
-  std::cin >> screen_index_;
-  if (screen_index_ < 0 && screen_index_ > monitor_count) {
-    g_printerr("Invalid screen index: %d\n", screen_index_);
-    return -2;
+  if (monitor_count > 1) { // more than 1 screen
+    // select screen to capture
+    g_print("Please select the screen to capture: ");
+    std::cin >> screen_index_;
+    if (screen_index_ < 0 && screen_index_ > monitor_count) {
+      g_printerr("Invalid screen index: %d\n", screen_index_);
+      return -2;
+    }
+    std::cin.get();
   }
 
   g_print(
-      "\nCapture screen %d\nEncoder settings: bitrate=%d, fps=%d, use hardware "
-      "encoder=%d\n",
-      screen_index_, target_bitrate_, target_fps_, use_hardware_encoder_);
-
-  std::cin.get();
+    "\nCapture screen %d\nEncoder settings: bitrate=%d, fps=%d, use "
+    "hardware "
+    "encoder=%d\n",
+    screen_index_, target_bitrate_, target_fps_, use_hardware_encoder_);
 
   // create gst pipeline on a separate thread
   gst_thread_.reset(new std::thread(InitGstPipeline));
