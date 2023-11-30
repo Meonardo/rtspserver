@@ -22,7 +22,8 @@ static gint server_id_;
 static GstState pipeline_state_ = GST_STATE_NULL;
 
 constexpr const gchar* RTSP_PORT = "9999";
-constexpr const gchar* RTSP_PATH = "/1";
+constexpr const gchar* RTSP_1080_PATH = "/1";
+constexpr const gchar* RTSP_720_PATH = "/2";
 constexpr const gchar* RTSP_ADDR = "0.0.0.0";
 
 static std::unique_ptr<std::thread> gst_thread_;
@@ -105,18 +106,13 @@ BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor,
   return TRUE;
 }
 
-static void InitGstPipeline() {
-  context_ = g_main_context_new();
-  g_main_context_push_thread_default(context_);
-
-  server_ = gst_rtsp_server_new();
-  gst_rtsp_server_set_service(server_, RTSP_PORT);
-
-  GstRTSPMountPoints* mounts = gst_rtsp_server_get_mount_points(server_);
+static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
+                                                   int height,
+                                                   int bitrate) {
   GstRTSPMediaFactory* factory = gst_rtsp_media_factory_new();
-
   gchar* pipeline = nullptr;
   gchar* monitor_index = nullptr;
+
   if (screen_index_ < 0) {
     monitor_index = g_strdup_printf("");
   } else {
@@ -126,11 +122,12 @@ static void InitGstPipeline() {
   if (use_hardware_encoder_) {
     pipeline = g_strdup_printf(
         "( d3d11screencapturesrc show-cursor=true %s ! "
-        "d3d11convert ! qsvh264enc "
-        "bitrate=%d rate-control=cqp target-usage=7 gop-size=%d ! rtph264pay "
+        "d3d11convert ! video/x-raw(memory:D3D11Memory),width=%d,height=%d ! "
+        "qsvh264enc "
+        "bitrate=%d rate-control=cqp target-usage=7 ! rtph264pay "
         "name=pay0 "
         "pt=96 )",
-        monitor_index, target_bitrate_, target_fps_);
+        monitor_index, width, height, bitrate, target_fps_);
   } else {
     pipeline = g_strdup_printf(
         "( d3d11screencapturesrc show-cursor=true %s ! "
@@ -149,7 +146,32 @@ static void InitGstPipeline() {
   // set the protocol to use TCP
   gst_rtsp_media_factory_set_protocols(factory, GST_RTSP_LOWER_TRANS_TCP);
   gst_rtsp_media_factory_set_shared(factory, TRUE);
-  gst_rtsp_mount_points_add_factory(mounts, RTSP_PATH, factory);
+
+  g_signal_connect(factory, "media-constructed",
+                   G_CALLBACK(media_constructed_callback), nullptr);
+  g_signal_connect(factory, "media-configure",
+                   G_CALLBACK(media_configure_callback), nullptr);
+
+  return factory;
+}
+
+static void InitGstPipeline() {
+  context_ = g_main_context_new();
+  g_main_context_push_thread_default(context_);
+
+  server_ = gst_rtsp_server_new();
+  gst_rtsp_server_set_service(server_, RTSP_PORT);
+
+  GstRTSPMountPoints* mounts = gst_rtsp_server_get_mount_points(server_);
+
+  // add 1080p stream
+  auto factory = CreateRTSPMediaFactory(1920, 1080, target_bitrate_);
+  gst_rtsp_mount_points_add_factory(mounts, RTSP_1080_PATH, factory);
+
+  // add 720p stream
+  auto factory1 = CreateRTSPMediaFactory(1280, 720, target_bitrate_ / 2);
+  gst_rtsp_mount_points_add_factory(mounts, RTSP_720_PATH, factory1);
+
   // bind the server to all network interfaces
   gst_rtsp_server_set_address(server_, RTSP_ADDR);
 
@@ -158,10 +180,13 @@ static void InitGstPipeline() {
     g_print("");
     g_print(
         "\n======================= Play RTSP stream ready at: "
-        "======================= \n",
-        RTSP_ADDR, RTSP_PORT, RTSP_PATH);
+        "======================= \n");
     for (const auto& addr : ip_addr_list_) {
-      g_print("rtsp://%s:%s%s\n", addr.c_str(), RTSP_PORT, RTSP_PATH);
+      int i = 1;
+      while (i < 3) {
+        g_print("rtsp://%s:%s/%d\n", addr.c_str(), RTSP_PORT, i);
+        i++;
+      }
     }
     g_print(
         "===================================================================="
@@ -170,10 +195,6 @@ static void InitGstPipeline() {
 
     g_signal_connect(server_, "client-connected",
                      G_CALLBACK(client_connected_callback), nullptr);
-    g_signal_connect(factory, "media-constructed",
-                     G_CALLBACK(media_constructed_callback), nullptr);
-    g_signal_connect(factory, "media-configure",
-                     G_CALLBACK(media_configure_callback), nullptr);
 
     main_loop_ = g_main_loop_new(context_, FALSE);
     g_main_loop_run(main_loop_);
@@ -185,6 +206,7 @@ static void InitGstPipeline() {
 
   g_object_unref(mounts);
   g_object_unref(factory);
+  g_object_unref(factory1);
   g_object_unref(server_);
 
   g_main_context_pop_thread_default(context_);
