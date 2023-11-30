@@ -28,10 +28,12 @@ constexpr const gchar* RTSP_ADDR = "0.0.0.0";
 static std::unique_ptr<std::thread> gst_thread_;
 static std::vector<std::string> ip_addr_list_;
 
-static int screen_index_ = 0;
+static int screen_index_ = -1;
 static bool use_hardware_encoder_ = true;
 static int target_bitrate_ = 4000;
 static int target_fps_ = 30;
+
+static GstDebugLevel loglevel_ = GST_LEVEL_NONE;
 
 static bool UpdatePipelineState(GstState new_state) {
   if (pipeline_state_ == new_state) {
@@ -114,26 +116,34 @@ static void InitGstPipeline() {
   GstRTSPMediaFactory* factory = gst_rtsp_media_factory_new();
 
   gchar* pipeline = nullptr;
+  gchar* monitor_index = nullptr;
+  if (screen_index_ < 0) {
+    monitor_index = g_strdup_printf("");
+  } else {
+    monitor_index = g_strdup_printf("monitor-index=%d", screen_index_);
+  }
+
   if (use_hardware_encoder_) {
     pipeline = g_strdup_printf(
-        "( d3d11screencapturesrc show-cursor=true monitor-index=%d ! "
+        "( d3d11screencapturesrc show-cursor=true %s ! "
         "d3d11convert ! qsvh264enc "
         "bitrate=%d rate-control=cqp target-usage=7 gop-size=%d ! rtph264pay "
         "name=pay0 "
         "pt=96 )",
-        screen_index_, target_bitrate_, target_fps_);
+        monitor_index, target_bitrate_, target_fps_);
   } else {
     pipeline = g_strdup_printf(
-        "( d3d11screencapturesrc show-cursor=true monitor-index=%d ! "
+        "( d3d11screencapturesrc show-cursor=true %s ! "
         "videoconvert ! x264enc "
         "bitrate=%d speed-preset=3 ! rtph264pay "
         "name=pay0 "
         "pt=96 )",
-        screen_index_, target_bitrate_);
+        monitor_index, target_bitrate_);
   }
 
   gst_rtsp_media_factory_set_launch(factory, pipeline);
 
+  g_free(monitor_index);
   g_free(pipeline);
 
   // set the protocol to use TCP
@@ -280,6 +290,14 @@ int HandleOptions(int argc, char** argv) {
         use_hardware_encoder_ = atoi(argv[i + 1]);
         i++;
       }
+    } else if (strcmp(argv[i], "-l") == 0) {
+      if (i + 1 < argc) {
+        loglevel_ = (GstDebugLevel)atoi(argv[i + 1]);
+        i++;
+      }
+      if (loglevel_ < 0 || loglevel_ > 6) {
+        loglevel_ = GST_LEVEL_ERROR;
+      }
     }
   }
 
@@ -291,8 +309,11 @@ int main(int argc, char** argv) {
   GetCurrentIP();
   // parse command line options
   HandleOptions(argc, argv);
+  // set the default gst log level
+  gst_debug_set_default_threshold(loglevel_);
   // init gstreamer
   gst_init(&argc, &argv);
+
   // get gstreamer version
   const gchar* version = gst_version_string();
   g_print("GStreamer version: %s\n\n\n", version);
@@ -306,7 +327,7 @@ int main(int argc, char** argv) {
   }
   g_print("Total of %d screens detected.\n", monitor_count);
 
-  if (monitor_count > 1) { // more than 1 screen
+  if (monitor_count > 1) {  // more than 1 screen
     // select screen to capture
     g_print("Please select the screen to capture: ");
     std::cin >> screen_index_;
@@ -318,10 +339,10 @@ int main(int argc, char** argv) {
   }
 
   g_print(
-    "\nCapture screen %d\nEncoder settings: bitrate=%d, fps=%d, use "
-    "hardware "
-    "encoder=%d\n",
-    screen_index_, target_bitrate_, target_fps_, use_hardware_encoder_);
+      "\nCapture screen %d\nEncoder settings: bitrate=%d, fps=%d, use "
+      "hardware "
+      "encoder=%d\n",
+      screen_index_, target_bitrate_, target_fps_, use_hardware_encoder_);
 
   // create gst pipeline on a separate thread
   gst_thread_.reset(new std::thread(InitGstPipeline));
