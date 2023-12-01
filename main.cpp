@@ -30,13 +30,13 @@ static std::unique_ptr<std::thread> gst_thread_;
 static std::vector<std::string> ip_addr_list_;
 static std::string default_speaker_id_;
 
-static int screen_index_ = -1;
+static int screen_index_ = 0;
 static bool use_hardware_encoder_ = true;
 static int target_bitrate_ = 4000;
 static int target_fps_ = 30;
 
 #if _DEBUG
-static GstDebugLevel loglevel_ = GST_LEVEL_FIXME;
+static GstDebugLevel loglevel_ = GST_LEVEL_WARNING;
 #else
 static GstDebugLevel loglevel_ = GST_LEVEL_NONE;
 #endif
@@ -121,9 +121,11 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
   gchar* audio_pipeline = "";
   if (audio) {
     audio_pipeline = g_strdup_printf(
-        "wasapi2src device=%s loopback=true ! queue ! audioconvert ! opusenc "
-        "bitrate=192000 ! queue ! "
-        "rtpopuspay name=pay1 pt=97",
+        "wasapi2src device=%s loopback=true ! queue "
+        "! audioconvert ! queue ! "
+        "avenc_aac "
+        "bitrate=192000 ! "
+        "rtpmp4apay name=pay1 pt=98",
         default_speaker_id_.c_str());
   }
 
@@ -135,21 +137,20 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
 
   if (use_hardware_encoder_) {
     pipeline = g_strdup_printf(
-        "( d3d11screencapturesrc show-cursor=true %s ! "
+        "( d3d11screencapturesrc show-cursor=true %s ! queue ! "
         "d3d11convert ! video/x-raw(memory:D3D11Memory),width=%d,height=%d ! "
-        "qsvh264enc "
+        "queue ! qsvh264enc "
         "bitrate=%d rate-control=cqp target-usage=7 ! rtph264pay "
         "name=pay0 pt=96 %s )",
         monitor_index, width, height, bitrate, audio_pipeline);
 
   } else {
     pipeline = g_strdup_printf(
-        "( d3d11screencapturesrc show-cursor=true %s ! "
-        "videoconvert ! x264enc "
-        "bitrate=%d speed-preset=3 ! rtph264pay "
-        "name=pay0 "
-        "pt=96 )",
-        monitor_index, target_bitrate_);
+        "( d3d11screencapturesrc show-cursor=true %s ! queue ! "
+        "videoconvert ! "
+        "openh264enc bitrate=%d rate-control=bitrate ! rtph264pay "
+        "name=pay0 pt=96 %s )",
+        monitor_index, bitrate, audio_pipeline);
   }
 
   gst_rtsp_media_factory_set_launch(factory, pipeline);
