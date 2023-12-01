@@ -14,22 +14,25 @@
 #pragma comment(lib, "IPHLPAPI.lib")
 #pragma comment(lib, "Ws2_32.lib")
 
+//////////////////////////////////////////////////////////////////////////
+// global variables
 static GMainContext* context_ = nullptr;
 static GstElement* pipeline_ = nullptr;
 static GMainLoop* main_loop_ = nullptr;
 static GstRTSPServer* server_ = nullptr;
-static gint server_id_;
+static gint server_id_; 
 static GstState pipeline_state_ = GST_STATE_NULL;
 
-constexpr const gchar* RTSP_PORT = "9999";
+constexpr const gchar* RTSP_SERVER_PORT = "9999";
+constexpr const gchar* RTSP_SERVER_ADDR = "0.0.0.0";
 constexpr const gchar* RTSP_1080_PATH = "/1";
 constexpr const gchar* RTSP_720_PATH = "/2";
-constexpr const gchar* RTSP_ADDR = "0.0.0.0";
 
-static std::unique_ptr<std::thread> gst_thread_;
-static std::vector<std::string> ip_addr_list_;
-static std::string default_speaker_id_;
+static std::unique_ptr<std::thread> gst_thread_; // gstreamer rtsp server thread
+static std::vector<std::string> ip_addr_list_; // local ip address list
+static std::string default_speaker_id_; // default speaker device id
 
+// default settings
 static int screen_index_ = 0;
 static bool use_hardware_encoder_ = true;
 static int target_bitrate_ = 4000;
@@ -41,6 +44,8 @@ static GstDebugLevel loglevel_ = GST_LEVEL_WARNING;
 static GstDebugLevel loglevel_ = GST_LEVEL_NONE;
 #endif
 
+//////////////////////////////////////////////////////////////////////////
+// update gst pipeline state
 static bool UpdatePipelineState(GstState new_state) {
   if (pipeline_state_ == new_state) {
     g_print(
@@ -65,6 +70,8 @@ static bool UpdatePipelineState(GstState new_state) {
   return true;
 }
 
+//////////////////////////////////////////////////////////////////////////
+// callback functions from gstreamer
 static void client_disconnect_callback(GstRTSPClient* self,
                                        GstRTSPContext* ctx,
                                        gpointer user_data) {
@@ -96,21 +103,8 @@ static void media_configure_callback(GstRTSPMediaFactory* factory,
   // g_print("media configured\n");
 }
 
-BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor,
-                              HDC hdcMonitor,
-                              LPRECT lprcMonitor,
-                              LPARAM dwData) {
-  int* count = (int*)dwData;
-  int width = abs(lprcMonitor->right - lprcMonitor->left);
-  int height = abs(lprcMonitor->bottom - lprcMonitor->top);
-  g_print("Monitor: %d (%d,%d,%d,%d) [width=%d,height=%d]\n", *count,
-          lprcMonitor->left, lprcMonitor->top, lprcMonitor->right,
-          lprcMonitor->bottom, width, height);
-
-  (*count)++;
-  return TRUE;
-}
-
+//////////////////////////////////////////////////////////////////////////
+// create gstreamer rtsp media factory
 static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
                                                    int height,
                                                    int bitrate,
@@ -173,6 +167,7 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
   return factory;
 }
 
+// create gstreamer rtsp server
 static void InitGstPipeline() {
   context_ = g_main_context_new();
   g_main_context_push_thread_default(context_);
@@ -181,7 +176,7 @@ static void InitGstPipeline() {
   gst_rtsp_session_pool_set_max_sessions(session, 255);
 
   server_ = gst_rtsp_server_new();
-  gst_rtsp_server_set_service(server_, RTSP_PORT);
+  gst_rtsp_server_set_service(server_, RTSP_SERVER_PORT);
 
   GstRTSPMountPoints* mounts = gst_rtsp_server_get_mount_points(server_);
 
@@ -194,7 +189,7 @@ static void InitGstPipeline() {
   gst_rtsp_mount_points_add_factory(mounts, RTSP_720_PATH, factory1);
 
   // bind the server to all network interfaces
-  gst_rtsp_server_set_address(server_, RTSP_ADDR);
+  gst_rtsp_server_set_address(server_, RTSP_SERVER_ADDR);
 
   server_id_ = gst_rtsp_server_attach(server_, context_);
   if (server_id_ > 0) {
@@ -205,7 +200,7 @@ static void InitGstPipeline() {
     for (const auto& addr : ip_addr_list_) {
       int i = 1;
       while (i < 3) {
-        g_print("rtsp://%s:%s/%d\n", addr.c_str(), RTSP_PORT, i);
+        g_print("rtsp://%s:%s/%d\n", addr.c_str(), RTSP_SERVER_PORT, i);
         i++;
       }
     }
@@ -233,6 +228,7 @@ static void InitGstPipeline() {
   g_main_context_pop_thread_default(context_);
 }
 
+// stop gstreamer rtsp server
 static void DeInitGstPipeline() {
   g_main_loop_quit(main_loop_);
 
@@ -241,6 +237,24 @@ static void DeInitGstPipeline() {
   }
 }
 
+//////////////////////////////////////////////////////////////////////////
+// enum display monitors
+BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor,
+  HDC hdcMonitor,
+  LPRECT lprcMonitor,
+  LPARAM dwData) {
+  int* count = (int*)dwData;
+  int width = abs(lprcMonitor->right - lprcMonitor->left);
+  int height = abs(lprcMonitor->bottom - lprcMonitor->top);
+  g_print("Monitor: %d (%d,%d,%d,%d) [width=%d,height=%d]\n", *count,
+    lprcMonitor->left, lprcMonitor->top, lprcMonitor->right,
+    lprcMonitor->bottom, width, height);
+
+  (*count)++;
+  return TRUE;
+}
+
+// get current ip address
 void GetCurrentIP() {
   WSADATA wsaData;
   if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
@@ -312,6 +326,7 @@ void GetCurrentIP() {
   WSACleanup();
 }
 
+// get default speaker device info
 static std::string GetDefaultSpeakers() {
   GstDeviceMonitor* monitor;
   GstCaps* caps;
@@ -355,6 +370,7 @@ static std::string GetDefaultSpeakers() {
   return result;
 }
 
+// handle command line options
 int HandleOptions(int argc, char** argv) {
   if (argc < 2) {
     g_print("Use default encoder settings!\n");
@@ -390,6 +406,8 @@ int HandleOptions(int argc, char** argv) {
   return 1;
 }
 
+//////////////////////////////////////////////////////////////////////////
+// entry point
 int main(int argc, char** argv) {
   // get local ip address
   GetCurrentIP();
