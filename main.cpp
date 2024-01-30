@@ -6,6 +6,9 @@
 #include <iphlpapi.h>
 #include <winsock2.h>
 
+#include <chrono>
+#include <ctime>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -20,18 +23,20 @@ static GMainContext* context_ = nullptr;
 static GstElement* pipeline_ = nullptr;
 static GMainLoop* main_loop_ = nullptr;
 static GstRTSPServer* server_ = nullptr;
-static gint server_id_; 
+static gint server_id_;
 static GstState pipeline_state_ = GST_STATE_NULL;
 
-constexpr const gchar* RTSP_SERVER_PORT = "9999";
+constexpr const gchar* RTSP_SERVER_PORT = "554";
 constexpr const gchar* RTSP_SERVER_ADDR = "0.0.0.0";
 constexpr const gchar* RTSP_1080_PATH = "/1";
 constexpr const gchar* RTSP_720_PATH = "/2";
-static GstRTSPLowerTrans trans_protocol_ = GST_RTSP_LOWER_TRANS_TCP; // transport protocol
+static GstRTSPLowerTrans trans_protocol_ =
+    GST_RTSP_LOWER_TRANS_TCP;  // transport protocol
 
-static std::unique_ptr<std::thread> gst_thread_; // gstreamer rtsp server thread
-static std::vector<std::string> ip_addr_list_; // local ip address list
-static std::string default_speaker_id_; // default speaker device id
+static std::unique_ptr<std::thread>
+    gst_thread_;                                // gstreamer rtsp server thread
+static std::vector<std::string> ip_addr_list_;  // local ip address list
+static std::string default_speaker_id_;         // default speaker device id
 
 // default settings
 static int screen_index_ = 0;
@@ -71,6 +76,20 @@ static bool UpdatePipelineState(GstState new_state) {
   return true;
 }
 
+static void print_current_time() {
+  auto now = std::chrono::system_clock::now();
+  auto now_c = std::chrono::system_clock::to_time_t(now);
+  auto local_time = std::localtime(&now_c);
+  auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+    now.time_since_epoch()) %
+    1000;
+  auto time_str = std::put_time(local_time, "%Y-%m-%d %H:%M:%S");
+
+  std::cout << "[" << std::put_time(local_time, "%Y-%m-%d %H:%M:%S");
+  std::cout << '.' << std::setfill('0') << std::setw(3) << milliseconds.count()
+    << "]" << std::endl;
+}
+
 //////////////////////////////////////////////////////////////////////////
 // callback functions from gstreamer
 static void client_disconnect_callback(GstRTSPClient* self,
@@ -78,7 +97,10 @@ static void client_disconnect_callback(GstRTSPClient* self,
                                        gpointer user_data) {
   auto conn = gst_rtsp_client_get_connection(self);
   auto url = gst_rtsp_connection_get_url(conn);
-  g_print(" [-]client disconnected, host:%s, port=%u\n", url->host, url->port);
+
+  g_print(" [-]client disconnected, host:%s, port=%u ", url->host,
+          url->port);
+  print_current_time();
 }
 
 static void client_connected_callback(GstRTSPServer* server,
@@ -86,7 +108,10 @@ static void client_connected_callback(GstRTSPServer* server,
                                       gpointer user_data) {
   auto conn = gst_rtsp_client_get_connection(object);
   auto url = gst_rtsp_connection_get_url(conn);
-  g_print(" [+]client connected, host:%s, port=%u\n", url->host, url->port);
+
+  g_print(" [+]client connected, host:%s, port=%u ", url->host,
+    url->port);
+  print_current_time();
 
   g_signal_connect(object, "teardown-request",
                    G_CALLBACK(client_disconnect_callback), nullptr);
@@ -133,11 +158,11 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
   if (use_hardware_encoder_) {
     pipeline = g_strdup_printf(
         "( d3d11screencapturesrc show-cursor=true %s ! queue ! "
-        "d3d11convert ! video/x-raw(memory:D3D11Memory),width=%d,height=%d ! "
+        "d3d11convert ! video/x-raw(memory:D3D11Memory),width=%d,height=%d,framerate=%d/1 ! "
         "queue ! qsvh264enc "
-        "bitrate=%d rate-control=cqp target-usage=7 ! rtph264pay "
+        "bitrate=%d rate-control=cbr ! rtph264pay "
         "name=pay0 pt=96 %s )",
-        monitor_index, width, height, bitrate, audio_pipeline);
+        monitor_index, width, height, target_fps_, bitrate, audio_pipeline);
 
   } else {
     pipeline = g_strdup_printf(
@@ -241,15 +266,15 @@ static void DeInitGstPipeline() {
 //////////////////////////////////////////////////////////////////////////
 // enum display monitors
 BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor,
-  HDC hdcMonitor,
-  LPRECT lprcMonitor,
-  LPARAM dwData) {
+                              HDC hdcMonitor,
+                              LPRECT lprcMonitor,
+                              LPARAM dwData) {
   int* count = (int*)dwData;
   int width = abs(lprcMonitor->right - lprcMonitor->left);
   int height = abs(lprcMonitor->bottom - lprcMonitor->top);
   g_print("Monitor: %d (%d,%d,%d,%d) [width=%d,height=%d]\n", *count,
-    lprcMonitor->left, lprcMonitor->top, lprcMonitor->right,
-    lprcMonitor->bottom, width, height);
+          lprcMonitor->left, lprcMonitor->top, lprcMonitor->right,
+          lprcMonitor->bottom, width, height);
 
   (*count)++;
   return TRUE;
