@@ -26,7 +26,6 @@ static GstRTSPServer* server_ = nullptr;
 static gint server_id_;
 static GstState pipeline_state_ = GST_STATE_NULL;
 
-constexpr const gchar* RTSP_SERVER_PORT = "554";
 constexpr const gchar* RTSP_SERVER_ADDR = "0.0.0.0";
 constexpr const gchar* RTSP_1080_PATH = "/1";
 constexpr const gchar* RTSP_720_PATH = "/2";
@@ -43,6 +42,7 @@ static int screen_index_ = 0;
 static bool use_hardware_encoder_ = true;
 static int target_bitrate_ = 4000;
 static int target_fps_ = 30;
+static int port_ = 554;
 
 #if _DEBUG
 static GstDebugLevel loglevel_ = GST_LEVEL_WARNING;
@@ -81,13 +81,13 @@ static void print_current_time() {
   auto now_c = std::chrono::system_clock::to_time_t(now);
   auto local_time = std::localtime(&now_c);
   auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
-    now.time_since_epoch()) %
-    1000;
+                          now.time_since_epoch()) %
+                      1000;
   auto time_str = std::put_time(local_time, "%Y-%m-%d %H:%M:%S");
 
   std::cout << "[" << std::put_time(local_time, "%Y-%m-%d %H:%M:%S");
   std::cout << '.' << std::setfill('0') << std::setw(3) << milliseconds.count()
-    << "]" << std::endl;
+            << "]" << std::endl;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -98,8 +98,7 @@ static void client_disconnect_callback(GstRTSPClient* self,
   auto conn = gst_rtsp_client_get_connection(self);
   auto url = gst_rtsp_connection_get_url(conn);
 
-  g_print(" [-]client disconnected, host:%s, port=%u ", url->host,
-          url->port);
+  g_print(" [-]client disconnected, host:%s, port=%u ", url->host, url->port);
   print_current_time();
 }
 
@@ -109,8 +108,7 @@ static void client_connected_callback(GstRTSPServer* server,
   auto conn = gst_rtsp_client_get_connection(object);
   auto url = gst_rtsp_connection_get_url(conn);
 
-  g_print(" [+]client connected, host:%s, port=%u ", url->host,
-    url->port);
+  g_print(" [+]client connected, host:%s, port=%u ", url->host, url->port);
   print_current_time();
 
   g_signal_connect(object, "teardown-request",
@@ -160,7 +158,7 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
         "( d3d11screencapturesrc show-cursor=true %s ! queue ! "
         "d3d11convert ! video/x-raw(memory:D3D11Memory),width=%d,height=%d,framerate=%d/1 ! "
         "queue ! qsvh264enc "
-        "bitrate=%d rate-control=cbr ! rtph264pay "
+        "bitrate=%d rate-control=cbr ! h264parse ! rtph264pay "
         "name=pay0 pt=96 %s )",
         monitor_index, width, height, target_fps_, bitrate, audio_pipeline);
 
@@ -168,7 +166,7 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
     pipeline = g_strdup_printf(
         "( d3d11screencapturesrc show-cursor=true %s ! queue ! "
         "videoconvert ! "
-        "openh264enc bitrate=%d rate-control=bitrate ! rtph264pay "
+        "x264enc bitrate=%d ! h264parse ! rtph264pay "
         "name=pay0 pt=96 %s )",
         monitor_index, bitrate, audio_pipeline);
   }
@@ -202,7 +200,8 @@ static void InitGstPipeline() {
   gst_rtsp_session_pool_set_max_sessions(session, 255);
 
   server_ = gst_rtsp_server_new();
-  gst_rtsp_server_set_service(server_, RTSP_SERVER_PORT);
+  auto port = std::to_string(port_);
+  gst_rtsp_server_set_service(server_, port.c_str());
 
   GstRTSPMountPoints* mounts = gst_rtsp_server_get_mount_points(server_);
 
@@ -226,7 +225,7 @@ static void InitGstPipeline() {
     for (const auto& addr : ip_addr_list_) {
       int i = 1;
       while (i < 3) {
-        g_print("rtsp://%s:%s/%d\n", addr.c_str(), RTSP_SERVER_PORT, i);
+        g_print("rtsp://%s:%d/%d\n", addr.c_str(), port_, i);
         i++;
       }
     }
@@ -426,6 +425,18 @@ int HandleOptions(int argc, char** argv) {
       if (loglevel_ < 0 || loglevel_ > 6) {
         loglevel_ = GST_LEVEL_ERROR;
       }
+    } else if (strcmp(argv[i], "-p") == 0) {
+      if (i + 1 < argc) {
+        port_ = atoi(argv[i + 1]);
+        i++;
+        if (port_ <= 0) {
+          port_ = 554;
+        }
+      }
+    } else {
+      g_printerr("Invalid option: %s\n", argv[i]);
+      ret = 0;
+      break;
     }
   }
 
