@@ -15,14 +15,11 @@ if(EXISTS "${LOC_PATH}")
 endif()
 unset(_LOC_PATH)
 
-
 # setup target
 add_executable(${PROJECT_NAME})
 
-
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
 target_compile_definitions(${PROJECT_NAME} PRIVATE _WIN32_WINNT=0x0601 UNICODE)
-
 
 target_sources(
   ${PROJECT_NAME}
@@ -31,9 +28,8 @@ target_sources(
   main.cpp
 )
 
-
 # find GStreamer dependencies
-set(ENV{PKG_CONFIG_PATH} "D:/gstreamer/1.0/msvc_x86_64/lib/pkgconfig")
+set(ENV{PKG_CONFIG_PATH} ${GSTREAMER_PKG_DIR})
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(
