@@ -3,9 +3,9 @@ a simple RTSP server created by using GStreamer.
 - video source is from screen capture;
 - audio source is from default audio output device;
 
-### Notic
+### Notice
 - Windows 64bit only;
-- GStreamer `v1.22.7`, install both dev & runtime;
+- GStreamer `v1.22.7`, please install both dev & runtime;
   
 ### Build
 ```bash
@@ -30,5 +30,5 @@ cmake -B .\build -DGSTREAMER_PKG_DIR="D:\gstreamer\1.0\msvc_x86_64\lib\pkgconfig
   ```
 - Play
   ```bash
-  gst-launch-1.0.exe rtspsrc location=rtsp://127.0.0.1:9999/1 buffer-mode=0 ! rtph264depay ! h264parse ! qsvh264dec ! fpsdisplaysink
+  gst-launch-1.0.exe rtspsrc location=rtsp://127.0.0.1:554/1 buffer-mode=0 ! rtph264depay ! h264parse ! qsvh264dec ! fpsdisplaysink
   ```
