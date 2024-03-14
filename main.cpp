@@ -26,6 +26,7 @@ static GstRTSPServer* server_ = nullptr;
 static gint server_id_;
 static GstState pipeline_state_ = GST_STATE_NULL;
 
+constexpr const gchar* META_DATA_TITLE = "RTSP server";
 constexpr const gchar* RTSP_SERVER_ADDR = "0.0.0.0";
 constexpr const gchar* RTSP_1080_PATH = "/1";
 constexpr const gchar* RTSP_720_PATH = "/2";
@@ -92,13 +93,44 @@ static void print_current_time() {
 
 //////////////////////////////////////////////////////////////////////////
 // callback functions from gstreamer
-static void client_disconnect_callback(GstRTSPClient* self,
-                                       GstRTSPContext* ctx,
-                                       gpointer user_data) {
+static void client_teardown_callback(GstRTSPClient* self,
+                                     GstRTSPContext* ctx,
+                                     gpointer user_data) {
   auto conn = gst_rtsp_client_get_connection(self);
   auto url = gst_rtsp_connection_get_url(conn);
 
-  g_print(" [-]client disconnected, host:%s, port=%u ", url->host, url->port);
+  g_print(" received teardown request, host:%s, port=%u ", url->host,
+          url->port);
+  print_current_time();
+}
+
+static void client_play_callback(GstRTSPClient* self,
+                                 GstRTSPContext* ctx,
+                                 gpointer user_data) {
+  auto conn = gst_rtsp_client_get_connection(self);
+  auto url = gst_rtsp_connection_get_url(conn);
+
+  g_print(" received play request, host:%s, port=%u ", url->host,
+          url->port);
+  print_current_time();
+}
+
+static void client_pause_callback(GstRTSPClient* self,
+                                  GstRTSPContext* ctx,
+                                  gpointer user_data) {
+  auto conn = gst_rtsp_client_get_connection(self);
+  auto url = gst_rtsp_connection_get_url(conn);
+
+  g_print(" received pause request, host:%s, port=%u ", url->host,
+          url->port);
+  print_current_time();
+}
+
+static void client_closed_callback(GstRTSPClient* self, gpointer user_data) {
+  auto conn = gst_rtsp_client_get_connection(self);
+  auto url = gst_rtsp_connection_get_url(conn);
+
+  g_print(" [-]client closed, host:%s, port=%u ", url->host, url->port);
   print_current_time();
 }
 
@@ -112,7 +144,13 @@ static void client_connected_callback(GstRTSPServer* server,
   print_current_time();
 
   g_signal_connect(object, "teardown-request",
-                   G_CALLBACK(client_disconnect_callback), nullptr);
+                   G_CALLBACK(client_teardown_callback), nullptr);
+  g_signal_connect(object, "closed", G_CALLBACK(client_closed_callback),
+                   nullptr);
+  g_signal_connect(object, "play-request", G_CALLBACK(client_play_callback),
+                   nullptr);
+  g_signal_connect(object, "pause-request", G_CALLBACK(client_pause_callback),
+                   nullptr);
 }
 
 static void media_constructed_callback(GstRTSPMediaFactory* factory,
@@ -156,7 +194,8 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
   if (use_hardware_encoder_) {
     pipeline = g_strdup_printf(
         "( d3d11screencapturesrc show-cursor=true %s ! queue ! "
-        "d3d11convert ! video/x-raw(memory:D3D11Memory),width=%d,height=%d,framerate=%d/1 ! "
+        "d3d11convert ! "
+        "video/x-raw(memory:D3D11Memory),width=%d,height=%d,framerate=%d/1 ! "
         "queue ! qsvh264enc "
         "bitrate=%d rate-control=cbr ! h264parse ! rtph264pay "
         "name=pay0 pt=96 %s )",
