@@ -197,7 +197,7 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
         "x-raw(memory:D3D11Memory),format=NV12,width=%d,height=%d,framerate=%d/"
         "1 ! "
         "queue ! qsvh264enc "
-        "bitrate=%d rate-control=cbr ! video/x-h264,width=%d,height=%d ! "
+        "bitrate=%d rate-control=cbr ! video/x-h264,width=%d,height=%d,profile=main ! "
         "h264parse ! rtph264pay "
         "name=pay0 pt=96 %s )",
         monitor_index, width, height, target_fps_, bitrate, width, height,
