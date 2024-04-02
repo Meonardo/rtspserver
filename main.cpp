@@ -41,8 +41,8 @@ static std::string default_speaker_id_;         // default speaker device id
 // default settings
 static int screen_index_ = 0;
 static bool use_hardware_encoder_ = true;
-static int target_bitrate_ = 4000;
-static int target_fps_ = 30;
+static int target_bitrate_ = 4096;
+static int target_fps_ = 25;
 static int port_ = 554;
 
 #if _DEBUG
@@ -110,8 +110,7 @@ static void client_play_callback(GstRTSPClient* self,
   auto conn = gst_rtsp_client_get_connection(self);
   auto url = gst_rtsp_connection_get_url(conn);
 
-  g_print(" received play request, host:%s, port=%u ", url->host,
-          url->port);
+  g_print(" received play request, host:%s, port=%u ", url->host, url->port);
   print_current_time();
 }
 
@@ -121,8 +120,7 @@ static void client_pause_callback(GstRTSPClient* self,
   auto conn = gst_rtsp_client_get_connection(self);
   auto url = gst_rtsp_connection_get_url(conn);
 
-  g_print(" received pause request, host:%s, port=%u ", url->host,
-          url->port);
+  g_print(" received pause request, host:%s, port=%u ", url->host, url->port);
   print_current_time();
 }
 
@@ -195,11 +193,15 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
     pipeline = g_strdup_printf(
         "( d3d11screencapturesrc show-cursor=true %s ! queue ! "
         "d3d11convert ! "
-        "video/x-raw(memory:D3D11Memory),width=%d,height=%d,framerate=%d/1 ! "
+        "video/"
+        "x-raw(memory:D3D11Memory),format=NV12,width=%d,height=%d,framerate=%d/"
+        "1 ! "
         "queue ! qsvh264enc "
-        "bitrate=%d rate-control=cbr ! h264parse ! rtph264pay "
+        "bitrate=%d rate-control=cbr ! video/x-h264,width=%d,height=%d ! "
+        "h264parse ! rtph264pay "
         "name=pay0 pt=96 %s )",
-        monitor_index, width, height, target_fps_, bitrate, audio_pipeline);
+        monitor_index, width, height, target_fps_, bitrate, width, height,
+        audio_pipeline);
 
   } else {
     pipeline = g_strdup_printf(
@@ -218,8 +220,8 @@ static GstRTSPMediaFactory* CreateRTSPMediaFactory(int width,
     g_free(audio_pipeline);
   }
 
-  // set the protocol to use TCP
-  gst_rtsp_media_factory_set_protocols(factory, trans_protocol_);
+  //// set the protocol to use TCP
+  // gst_rtsp_media_factory_set_protocols(factory, trans_protocol_);
   gst_rtsp_media_factory_set_shared(factory, TRUE);
 
   g_signal_connect(factory, "media-constructed",
@@ -448,12 +450,20 @@ int HandleOptions(int argc, char** argv) {
         target_bitrate_ = atoi(argv[i + 1]);
         i++;
         if (target_bitrate_ <= 0) {
-          target_bitrate_ = 4000;
+          target_bitrate_ = 4096;
         }
       }
     } else if (strcmp(argv[i], "-e") == 0) {
       if (i + 1 < argc) {
         use_hardware_encoder_ = atoi(argv[i + 1]);
+        i++;
+      }
+    } else if (strcmp(argv[i], "-f") == 0) {
+      if (i + 1 < argc) {
+        target_fps_ = atoi(argv[i + 1]);
+        if (target_fps_ <= 0) {
+					target_fps_ = 25;
+				}
         i++;
       }
     } else if (strcmp(argv[i], "-l") == 0) {
